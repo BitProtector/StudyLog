@@ -158,6 +158,14 @@ class GameView(Screen):
     Für jedes Semester wird eine DataTable erstellt.
     """
 
+    CSS = """
+        DinoGameWidget {
+            height: 100%;
+            width: 100%;
+        }
+"""
+
+
     def __init__(self):
         super().__init__()
 
