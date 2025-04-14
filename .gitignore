@@ -1,5 +1,9 @@
 *.exe
 *.db
+*.json
 venv*/
 build/
 dist/
+__pycache__/
+*.lnk
+*.spec
