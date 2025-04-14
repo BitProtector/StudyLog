@@ -44,13 +44,13 @@ python main.py
 pyinstaller --noconfirm --onefile --console app.py
 ```
 
-### 6. (optional) Signieren der EXE (Notwendig, da die exe ansonsten als nicht vertrauenswürdig gekennzechnet wird.)
+### 6. (optional) Signieren der EXE (Notwendig, da die exe ansonsten als nicht vertrauenswürdig gekennzeichnet wird.)
 Für diesen Schritt ist das ["Windows SDK"](https://developer.microsoft.com/de-de/windows/downloads/windows-sdk/) erforderlich.
 ```bash
 signtool sign /a /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist\main.exe
 ```
 
-### Struktur des JSON-Files, welches die Module enthällt.
+### Struktur des JSON-Files, welches die Module enthält.
 ```bash
 [
   {
