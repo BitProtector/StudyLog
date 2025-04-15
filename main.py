@@ -4,12 +4,16 @@ from textual.widgets import Header, Footer, Input, Button, Label, DataTable, Sel
 from textual.containers import VerticalScroll, HorizontalScroll, Container, Horizontal
 from textual import on
 
+from textual_plotext import PlotextPlot
+from plotext._figure import _figure_class
+
 from extension import GameView
+from calculate import compute_final_grade
 
 from rich.text import Text
+from rich.panel import Panel
 import sqlite3
 import json
-
 
 # Für den Dateidialog
 import tkinter
@@ -531,7 +535,7 @@ class DisplayView(Screen):
     def __init__(self):
         super().__init__()
         # Container für dynamisch erzeugte Tabellen
-        self.container = VerticalScroll()
+        self.container = HorizontalScroll()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -568,6 +572,9 @@ class DisplayView(Screen):
             ''')
             rows = cursor.fetchall()
 
+        grade_table = VerticalScroll()
+        self.container.mount(grade_table)
+
         # Gruppiere die Daten pro Semester
         data_per_semester = defaultdict(list)
         for (name, semester, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
@@ -577,81 +584,14 @@ class DisplayView(Screen):
             if not data_per_semester[semester]:
                 continue
 
-            self.container.mount(Label(f"Semester {semester}"))
+            grade_table.mount(Label(f"Semester {semester}"))
 
             table = DataTable()
             table.add_columns("Modul", "K1", "K2", "MSP", "EN", "Schnitt")
 
             for (name, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
                 # Berechnung der Eingangsnote (EN) und Gesamtnote (final_average) je nach Berechnungstyp
-                if calc_type == 0 or calc_type == None:
-                    # Typ 0: EN = (k1 + k2) / 2, Gesamtnote = (EN + MSP) / 2
-                    if k1 is not None and k2 is not None:
-                        en = (k1 + k2) / 2
-                    elif k1 is not None:
-                        en = k1
-                    elif k2 is not None:
-                        en = k2
-                    else:
-                        en = None
-
-                    if en is not None and msp is not None:
-                        final_average = (en + msp) / 2
-                    else:
-                        final_average = en if en is not None else msp
-
-                elif calc_type == 1:
-                    # Typ 1: EN = k1 * (1/3) + k2 * (2/3), Gesamtnote = (EN + MSP) / 2
-                    if k1 is not None and k2 is not None:
-                        en = (k1 / 3 + 2 * k2 / 3)
-                    elif k1 is not None:
-                        en = k1
-                    elif k2 is not None:
-                        en = k2
-                    else:
-                        en = None
-
-                    if en is not None and msp is not None:
-                        final_average = (en + msp) / 2
-                    else:
-                        final_average = en if en is not None else msp
-
-                elif calc_type == 2:
-                    # Typ 2: EN = (k1 + k2) / 2, dann:
-                    #         wenn EN > MSP => Gesamtnote = (EN + MSP) / 2, sonst nur MSP
-                    if k1 is not None and k2 is not None:
-                        en = (k1 + k2) / 2
-                    elif k1 is not None:
-                        en = k1
-                    elif k2 is not None:
-                        en = k2
-                    else:
-                        en = None
-
-                    if en is not None and msp is not None:
-                        if en > msp:
-                            final_average = (en + msp) / 2
-                        else:
-                            final_average = msp
-                    else:
-                        final_average = en if en is not None else msp
-
-                elif calc_type == 3:
-                    # Typ 3: Gewichtsbasierte Berechnung wie aktuell implementiert
-                    numerator = 0.0
-                    total_weight = 0.0
-                    if k1 is not None and k1_weight is not None:
-                        numerator += k1 * k1_weight
-                        total_weight += k1_weight
-                    if k2 is not None and k2_weight is not None:
-                        numerator += k2 * k2_weight
-                        total_weight += k2_weight
-                    en = numerator / total_weight if total_weight else None
-
-                    if en is not None and msp is not None and msp_weight is not None:
-                        final_average = en * (1 - msp_weight) + msp * msp_weight
-                    else:
-                        final_average = en if en is not None else msp
+                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
 
                 # Formatierung der Werte zur Anzeige
                 k1_str = f"{k1:.2f}" if k1 is not None else "-"
@@ -668,8 +608,72 @@ class DisplayView(Screen):
                 ]
                 table.add_row(*styled_row)
 
-            self.container.mount(table)
-            self.container.mount(Label(" "))
+            grade_table.mount(table)
+            grade_table.mount(Label(" "))
+    
+        self.render_visuals(data_per_semester)
+
+    def render_visuals(self, data_per_semester):
+        # ECTS und Durchschnittsverlauf vorbereiten
+        semesters = []
+        ects_values = []
+        average_values = []
+        heatmap_values = {}
+
+        for semester in range(1, 9):
+            semester_data = data_per_semester.get(semester, [])
+            semesters.append(str(semester))
+
+            total_ects = 0
+            grades_in_sem = []
+            for (name, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
+                with sqlite3.connect(DB_PATH) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
+                    result = cursor.fetchone()
+                    if result:
+                        total_ects += result[0]
+
+                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
+
+                # final_average in unsere Sammlung eintragen, falls definiert
+                if final_average is not None:
+                    grades_in_sem.append(final_average)
+
+            avg = sum(grades_in_sem) / len(grades_in_sem) if grades_in_sem else 0
+            ects_values.append(total_ects)
+            average_values.append(avg)
+            heatmap_values[semester]=(grades_in_sem if grades_in_sem else [0])
+
+        # Visualisierung mit plotext vorbereiten
+        visuals = VerticalScroll()
+        self.container.mount(visuals)
+
+        # Bar Chart ECTS
+        plot1 = PlotextPlot()
+        plot1.plt.title("ECTS pro Semester")
+        plot1.plt.bar(semesters, ects_values, width = 0.3, color=32)
+        plot1.plt.xlim(0, 9)
+        visuals.mount(Label(""))
+        visuals.mount(plot1)
+
+        # Bar Chart Durchschnitt
+        plot2 = PlotextPlot()
+        plot2.plt.title("Notendurchschnitt pro Semester")
+        plot2.plt.bar(semesters, average_values, orientation = "h", width = 0.001, color=32)
+        plot2.plt.xlim(1, 6)
+        # Werte der Balken anzeigen
+        [plot2.plt.text(round(value,2), x = value, y = parse_int(semesters[idx]), alignment = 'right', background=32, color=255) for idx, value in enumerate(average_values)]
+        visuals.mount(Label(""))
+        visuals.mount(plot2)
+
+        visuals.mount(Label(""))
+        visuals.mount(Label("Hinweise:"))
+        # Warnings bei < 15 ECTS
+        for s, ects in zip(semesters, ects_values):
+            if ects < 15:
+                visuals.mount(Label(f"Warnung: Semester {s} hat nur {ects} ECTS!", id=f"warn_{s}"))
+
 
 # -----------------------------------------------------------------------------
 # Haupt-App: StudyApp
