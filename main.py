@@ -105,29 +105,28 @@ class MessageBox(ModalScreen):
         margin: 2 4;
     }
     """
-    def __init__(self, message, modul, caller, ignore_module=[], name=None, id=None, classes=None):
+    
+    def __init__(self, message, button_list=[], name=None, id=None, classes=None):
         super().__init__(name, id, classes)
         self.message = message
-        self.caller = caller
-        self.ignore_module = ignore_module
-        self.module =  modul
+        # Buttons werden in folgendem Format erwartet:
+        # [[Button_object, callback_func], [Button_object, callback_func], usw...]
+        self.button_list = button_list
 
     def compose(self) -> ComposeResult:
         with Container():
             yield Label(self.message)
             with Horizontal():
-                yield Button("Abbrechen", id="close", variant="success")
-                yield Button("Ignorieren", id="acknowledge", variant="warning")
+                for button, callback in self.button_list:
+                    yield button                    
     
-    @on(Button.Pressed, "#close")
-    def exit_popup(self) -> None:
+    @on(Button.Pressed)
+    def button_pressed(self, event: Button.Pressed) -> None:
         self.app.pop_screen()
-
-    @on(Button.Pressed, "#acknowledge")
-    def ignore_popup(self) -> None:
-        self.app.pop_screen()
-        self.ignore_module.append(self.module)
-        self.caller.update_semester(self.ignore_module)
+        for button, callback in self.button_list:
+            if button.id == event.button.id and callback:
+                callback()
+                break
 
 # -----------------------------------------------------------------------------
 # View: StudyDesignView (Modul Import, Anlegen, Löschen und Update)
@@ -154,6 +153,10 @@ class StudyDesignView(Screen):
         height: 20%;
     }
     """
+
+    def __init__(self, name = None, id = None, classes = None):
+        super().__init__(name, id, classes)
+        self.ignore_dependencies=[]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -192,6 +195,9 @@ class StudyDesignView(Screen):
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         self.show_modules(event.value.lower())
+        # Lösche die Liste zum Ignorieren der Modulabhängigkeiten, 
+        # da beim betrachten von anderen Modulen die Abhängigkeiten wieder betrachtet werden müssen.
+        self.ignore_dependencies.clear()
 
     @on(Button.Pressed)
     def handle_buttons(self, event: Button.Pressed) -> None:
@@ -283,7 +289,7 @@ class StudyDesignView(Screen):
             cursor.execute("DELETE FROM module WHERE name = ?", (delete_module_name,))
             conn.commit()
 
-    def update_semester(self, ignore = []):
+    def update_semester(self):
         """Updated das Semester eines Moduls unter Prüfung von Abhängigkeiten."""
         module_name = self.query_one("#update_module_input", Input).value
         semester_val = self.query_one("#update_semester_input", Select).value
@@ -306,14 +312,28 @@ class StudyDesignView(Screen):
             else:
                 dependencies = []
             
-            # Prüfe alle Abhängigkeiten
-            for dependency in dependencies:
-                cursor.execute("SELECT semester FROM module WHERE name = ?", (dependency,))
-                row_dep = cursor.fetchone()
-                if row_dep is None or ((row_dep[0] > semester_val or row_dep[0] == 0) and semester_val != 0):
-                    if not dependency in ignore:
-                        self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {dependency} erfüllen.", dependency, self, ignore))
-                        return
+        # Prüfe alle Abhängigkeiten
+        for dependency in dependencies:
+            cursor.execute("SELECT semester FROM module WHERE name = ?", (dependency,))
+            row_dep = cursor.fetchone()
+            if row_dep is None or ((row_dep[0] > semester_val or row_dep[0] == 0) and semester_val != 0):
+                if not dependency in self.ignore_dependencies:
+                    # Definiere Call-Back Funktion für MsgBox, welche bei "Ignorieren" aufgerufen werden kann
+                    def ignore_dependency():
+                        self.ignore_dependencies.append(dependency)
+                        # Führe diese funktion nochmals aus.
+                        self.update_semester()
+                    self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {dependency} erfüllen.", 
+                                                        [
+                                                            [Button("Abbrechen", id="close", variant="success"), False],
+                                                            [Button("Ignorieren", id="acknowledge", variant="warning"), ignore_dependency]
+                                                        ]
+                                                        ))
+                    return
+        # Lösche die Liste zum Ignorieren der Modulabhängigkeiten, 
+        # da beim betrachten von anderen Modulen die Abhängigkeiten wieder betrachtet werden müssen.
+        self.ignore_dependencies.clear()
+
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE module SET semester = ? WHERE UPPER(name) = UPPER(?)", (semester_val, module_name))
@@ -321,7 +341,7 @@ class StudyDesignView(Screen):
 
         self.query_one("#update_module_input", Input).clear()
         self.query_one("#update_semester_input", Select).clear()
-        
+
     def show_modules(self, filter_text=""):
         """Liest die Module aus der DB und zeigt sie in der Log-Tabelle an."""
         log_table = self.query_one("#study_log", DataTable)
@@ -438,7 +458,9 @@ class GradeEntryView(Screen):
             "calc_type": self.query_one("#calc_type", Select).value,
         }
         if self.query_one("#module_select", Select).value == Select.BLANK:
-            self.parent.push_screen(MessageBox("Kein Modul ausgewahlt!"))
+            self.parent.push_screen(MessageBox("Kein Modul ausgewahlt!", 
+                                               [[Button("ok", id="close", variant="success"), False]]
+                                               ))
             return
         
         with sqlite3.connect(DB_PATH) as conn:
@@ -450,7 +472,9 @@ class GradeEntryView(Screen):
             ''', (values["module_name"],))
             result = cursor.fetchone()
             if result is None:
-                self.parent.push_screen(MessageBox("Modul nicht gefunden!"))
+                self.parent.push_screen(MessageBox("Modul nicht gefunden!", 
+                                                   [[Button("ok", id="close", variant="success"), False]]
+                                                   ))
                 return
             module_id = result[0]
             cursor.execute(
