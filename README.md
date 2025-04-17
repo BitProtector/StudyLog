@@ -9,6 +9,7 @@ Ein leichtgewichtiges Konsolentool mit GUI (Textual), zur Verwaltung von Modulen
 - Eingabe und Speicherung von Noten mit Gewichtung
 - Anzeige aller Module samt Berechnungen (EN, MSP, Schnitt)
 - Abhaengigkeitspruefung bei Semesterverschiebung
+- Grafische Visualisierung von ECTS-Punkten und Semesternoten über alle Semester
 - Konsolen-GUI basierend auf [Textual](https://github.com/Textualize/textual)
 
 ## Voraussetzungen
