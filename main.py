@@ -31,8 +31,11 @@ def initialize_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS module (
                 id INTEGER PRIMARY KEY,
+                mod_id INTEGER,
                 name TEXT,
-                description TEXT, 
+                description TEXT,
+                beschreibung TEXT, 
+                assessment INTEGER,
                 ects INTEGER, 
                 dependencies TEXT, 
                 semester INTEGER
@@ -238,19 +241,29 @@ class StudyDesignView(Screen):
             cursor = conn.cursor()
             if isinstance(data, list):
                 for module in data:
-                    name = module.get("short") or ""
+                    mod_id = module.get("id") or 0
+                    name = module.get("bezeichnung") or ""
                     description = module.get("name") or ""
+                    beschreibung = module.get("description") or ""
+                    assessment = 1 if (module.get("assessment") or 0) else 0 
                     ects = module.get("ects") or 0
-                    dependencies = module.get("dependencies", {}).get("de") or []
+                    dependencies = module.get("dependingModulesIDs", {}) or []
                     if not name:
+                        continue
+                    if not id:
                         continue
                     cursor.execute("SELECT 1 FROM module WHERE name = ?", (name,))
                     if cursor.fetchone():
-                        continue  # Modul bereits vorhanden
-                    cursor.execute(
-                        "INSERT INTO module (name, description, ects, dependencies, semester) VALUES (?, ?, ?, ?, 0)",
-                        (name, description, ects, json.dumps(dependencies))
-                    )
+                        # Modul bereits vorhanden
+                        cursor.execute(
+                            "UPDATE module SET mod_id = ?, description = ?, beschreibung = ?, assessment = ?, ects = ?, dependencies = ? WHERE name == ?",
+                            (mod_id, description, beschreibung, assessment, ects, json.dumps(dependencies), name)
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO module (mod_id, name, description, beschreibung, assessment, ects, dependencies, semester) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+                            (mod_id, name, description, beschreibung, assessment, ects, json.dumps(dependencies))
+                        )
             conn.commit()
 
     def add_module(self):
@@ -314,7 +327,7 @@ class StudyDesignView(Screen):
             
         # Prüfe alle Abhängigkeiten
         for dependency in dependencies:
-            cursor.execute("SELECT semester FROM module WHERE name = ?", (dependency,))
+            cursor.execute("SELECT semester, name FROM module WHERE mod_id = ?", (dependency,))
             row_dep = cursor.fetchone()
             if row_dep is None or ((row_dep[0] > semester_val or row_dep[0] == 0) and semester_val != 0):
                 if not dependency in self.ignore_dependencies:
@@ -323,7 +336,7 @@ class StudyDesignView(Screen):
                         self.ignore_dependencies.append(dependency)
                         # Führe diese funktion nochmals aus.
                         self.update_semester()
-                    self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {dependency} erfüllen.", 
+                    self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {row_dep[1]} erfüllen.", 
                                                         [
                                                             [Button("Abbrechen", id="close", variant="success"), False],
                                                             [Button("Ignorieren", id="acknowledge", variant="warning"), ignore_dependency]

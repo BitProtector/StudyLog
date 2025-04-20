@@ -52,15 +52,34 @@ signtool sign /a /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist\ma
 ```
 
 ### Struktur des JSON-Files, welches die Module enthält.
+Wichtig ist hierbei, der Abschnitt "dependingModulesIDs". Dieser definiert die Abhängigkeiten unter den Modulen.
+
 ```bash
 [
   {
-    "short": "ET1",
-    "name": "Einführung Elektrotechnik",
-    "ects": 5,
-    "dependencies": {
-      "de": []
-    }
-  }
+        "bezeichnung": "aet2",
+        "id": 6007772,
+        "name": "Allgemeine Elektrotechnik 2",
+        "sgAbbreviation": "EIT21",
+        "sgId": 9447275,
+        "ects": 3,
+        "description": "Harmonische Zeitabhängigkeit von Strom und Spannung und deren Beschreibung ...",
+        "dependingModulesIDs": [
+            6007771,
+            9746777,
+            6008331,
+            6008327
+        ],
+        "hasMsp": true,
+        "profileAbbreviations": [],
+        "difficulty": "BASIC",
+        "status": "m.Aktiv",
+        "dataScienceInformation": {
+            "moduleType": "UNKNOWN"
+        },
+        "assessment": true,
+        "gruppenAnrechnung": 0,
+        "childModulegroups": []
+    },
 ]
 ```
