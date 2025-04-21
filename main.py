@@ -590,6 +590,7 @@ class DisplayView(Screen):
                 SELECT
                     m.name,
                     m.semester,
+                    m.assessment,
                     g.k1,
                     g.k2,
                     g.k1_weight,
@@ -614,8 +615,8 @@ class DisplayView(Screen):
 
         # Gruppiere die Daten pro Semester
         data_per_semester = defaultdict(list)
-        for (name, semester, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
-            data_per_semester[semester].append((name, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type))
+        for (name, semester, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
+            data_per_semester[semester].append((name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type))
 
         for semester in range(1, 9):
             if not data_per_semester[semester]:
@@ -624,25 +625,37 @@ class DisplayView(Screen):
             grade_table.mount(Label(f"Semester {semester}"))
 
             table = DataTable()
-            table.add_columns("Modul", "K1", "K2", "MSP", "EN", "Schnitt")
+            table.add_columns("Modul", "AS", "K1", "K2", "MSP", "EN", "Schnitt")
 
-            for (name, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
+            for (name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
                 # Berechnung der Eingangsnote (EN) und Gesamtnote (final_average) je nach Berechnungstyp
                 en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
 
                 # Formatierung der Werte zur Anzeige
+                assessment_str = "x" if assessment == 1 else "-"
                 k1_str = f"{k1:.2f}" if k1 is not None else "-"
                 k2_str = f"{k2:.2f}" if k2 is not None else "-"
                 msp_str = f"{msp:.2f}" if msp is not None else "-"
                 en_str = f"{en:.2f}" if en is not None else "-"
                 average_str = f"{final_average:.2f}" if final_average is not None else "-"
 
-                row = [name, k1_str, k2_str, msp_str, en_str, average_str]
-                styled_row = [
-                    Text(str(cell),
-                        style="" if parse_float(cell) is None else ("#03AC13" if parse_float(cell) >= 4.0 else "#FF4500"),
-                        justify="right") for cell in row
-                ]
+                row = [name, assessment_str, k1_str, k2_str, msp_str, en_str, average_str]
+
+                styled_row = []
+                for cell in row:
+                    if parse_float(cell) is None:
+                        if cell == "x":
+                            style = "#FF8C00"
+                        else:
+                            style = ""
+                    elif parse_float(cell) >= 4.0:
+                        style = "#03AC13"
+                    else:
+                        style = "#FF4500"
+                    
+                    styled_row.append(
+                        Text(str(cell), style=style, justify="right") 
+                    )
                 table.add_row(*styled_row)
 
             grade_table.mount(table)
@@ -663,7 +676,7 @@ class DisplayView(Screen):
 
             total_ects = 0
             grades_in_sem = []
-            for (name, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
+            for (name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
                 with sqlite3.connect(DB_PATH) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
@@ -706,11 +719,19 @@ class DisplayView(Screen):
 
         visuals.mount(Label(""))
         visuals.mount(Label("Hinweise:"))
-        # Warnings bei < 15 ECTS
+        # Infos
+        # ECTS Warnungen
         for s, ects in zip(semesters, ects_values):
             if ects < 15:
                 visuals.mount(Label(f"Warnung: Semester {s} hat nur {ects} ECTS!", id=f"warn_{s}"))
-
+        # Info Assessment
+        ass_cnt = 0
+        for s in semesters:
+            for m in data_per_semester[int(s)]:
+                if m[1] == 1: ass_cnt += 1
+            if ass_cnt >= 9:
+                visuals.mount(Label(f"Info: Ab dem Semester {s} ist das Assessment bestanden!", id=f"info_{s}"))
+                break
 
 # -----------------------------------------------------------------------------
 # Haupt-App: StudyApp
