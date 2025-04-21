@@ -7,10 +7,12 @@ Ein leichtgewichtiges Konsolentool mit GUI (Textual), zur Verwaltung von Modulen
 - Import von Modulen via JSON-Datei
 - Manuelles Anlegen und Zuweisen von Modulen zu Semestern
 - Eingabe und Speicherung von Noten mit Gewichtung
-- Anzeige aller Module samt Berechnungen (EN, MSP, Schnitt)
+- Anzeige aller Module samt Berechnungen (Assessment, EN, MSP, Schnitt)
 - Abhaengigkeitspruefung bei Semesterverschiebung
 - Grafische Visualisierung von ECTS-Punkten und Semesternoten über alle Semester
+- Hinweise bez. Assessment und ECTS-Punkten werden eingeblendet.
 - Konsolen-GUI basierend auf [Textual](https://github.com/Textualize/textual)
+- Multi-User-Funktionalität, damit die Applikation als Webservice betrieben werden kann.
 
 ## Voraussetzungen
 

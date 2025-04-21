@@ -1,5 +1,5 @@
 from textual.app import App, ComposeResult
-from textual.screen import Screen, ModalScreen
+from textual.screen import Screen
 from textual.widgets import Header, Footer, Input, Button, Label, DataTable, Select
 from textual.containers import VerticalScroll, HorizontalScroll, Container, Horizontal
 from textual import on
@@ -7,129 +7,23 @@ from textual import on
 from textual_plotext import PlotextPlot
 from plotext._figure import _figure_class
 
-from extension import GameView
-from calculate import compute_final_grade
+from StudyLogApp.extension import GameView
+from StudyLogApp.calculate import compute_final_grade
+from StudyLogApp.utils import running_in_web, parse_int, parse_float, MessageBox
+from StudyLogApp.db import initialize_db, init_auth_db, DB_PATH
+from StudyLogApp.login import LoginScreen
+
+import json, sqlite3
 
 from rich.text import Text
 from rich.panel import Panel
-import sqlite3
-import json
+
 
 # Für den Dateidialog
 import tkinter
 from tkinter.filedialog import askopenfilename
 from collections import defaultdict
 
-DB_PATH = "studium.db"  # Datenbankpfad
-
-# -----------------------------------------------------------------------------
-# Initialisierung der Datenbank (Tabellen: module, grades)
-# -----------------------------------------------------------------------------
-def initialize_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS module (
-                id INTEGER PRIMARY KEY,
-                mod_id INTEGER,
-                name TEXT,
-                description TEXT,
-                beschreibung TEXT, 
-                assessment INTEGER,
-                ects INTEGER, 
-                dependencies TEXT, 
-                semester INTEGER
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS grades (
-                id INTEGER PRIMARY KEY,
-                module_id INTEGER,
-                k1 REAL,
-                k2 REAL,
-                k1_weight REAL,
-                k2_weight REAL,
-                msp REAL,
-                msp_weight REAL,
-                calc_type INTEGER,
-                FOREIGN KEY (module_id) REFERENCES module(id)
-            )
-        ''')
-        conn.commit()
-
-# -----------------------------------------------------------------------------
-# Parser-Funktionen für float und int
-# -----------------------------------------------------------------------------
-def parse_float(value: str):
-    """Gibt None zurück, wenn value leer ist, sonst wird versucht, in float umzuwandeln."""
-    value = value.strip()
-    if not value:
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-def parse_int(value: str):
-    """Gibt None zurück, wenn value leer ist oder kein int darstellt."""
-    value = value.strip()
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-# -----------------------------------------------------------------------------
-# Modal Screen für Nachrichten (MessageBox)
-# -----------------------------------------------------------------------------
-class MessageBox(ModalScreen):
-    """Ein modaler Dialog zur Anzeige von Nachrichten."""
-    DEFAULT_CSS = """
-    MessageBox {
-        align: center middle;
-    }
-    MessageBox > Container {
-        width: auto;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-    }
-    MessageBox > Container > Label {
-        width: 100%;
-        content-align-horizontal: center;
-        margin-top: 1;
-    }
-    MessageBox > Container > Horizontal {
-        width: auto;
-        height: auto;
-    }
-    MessageBox > Container > Horizontal > Button {
-        margin: 2 4;
-    }
-    """
-    
-    def __init__(self, message, button_list=[], name=None, id=None, classes=None):
-        super().__init__(name, id, classes)
-        self.message = message
-        # Buttons werden in folgendem Format erwartet:
-        # [[Button_object, callback_func], [Button_object, callback_func], usw...]
-        self.button_list = button_list
-
-    def compose(self) -> ComposeResult:
-        with Container():
-            yield Label(self.message)
-            with Horizontal():
-                for button, callback in self.button_list:
-                    yield button                    
-    
-    @on(Button.Pressed)
-    def button_pressed(self, event: Button.Pressed) -> None:
-        self.app.pop_screen()
-        for button, callback in self.button_list:
-            if button.id == event.button.id and callback:
-                callback()
-                break
 
 # -----------------------------------------------------------------------------
 # View: StudyDesignView (Modul Import, Anlegen, Löschen und Update)
@@ -237,7 +131,7 @@ class StudyDesignView(Screen):
             except json.JSONDecodeError:
                 return  # Ungültiges JSON
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             if isinstance(data, list):
                 for module in data:
@@ -278,7 +172,7 @@ class StudyDesignView(Screen):
         if semester_val is None or semester_val < 1 or semester_val > 8:
             semester_val = 0
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO module (name, description, ects, dependencies, semester) VALUES (?, ?, ?, ?, ?)",
@@ -291,7 +185,7 @@ class StudyDesignView(Screen):
         delete_module_name = self.query_one("#delete_module_input", Input).value
         if not delete_module_name:
             return
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM module WHERE name = ?", (delete_module_name,))
             result = cursor.fetchone()
@@ -315,7 +209,7 @@ class StudyDesignView(Screen):
         if semester_val is None or semester_val < 1 or semester_val > 8:
             semester_val = 0
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             # Abhängigkeiten aus Spalte dependencies lesen
             cursor.execute("SELECT dependencies FROM module WHERE name = ?", (module_name,))
@@ -347,7 +241,7 @@ class StudyDesignView(Screen):
         # da beim betrachten von anderen Modulen die Abhängigkeiten wieder betrachtet werden müssen.
         self.ignore_dependencies.clear()
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE module SET semester = ? WHERE UPPER(name) = UPPER(?)", (semester_val, module_name))
             conn.commit()
@@ -359,7 +253,7 @@ class StudyDesignView(Screen):
         """Liest die Module aus der DB und zeigt sie in der Log-Tabelle an."""
         log_table = self.query_one("#study_log", DataTable)
         log_table.clear()
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             if filter_text:
                 cursor.execute(
@@ -444,7 +338,7 @@ class GradeEntryView(Screen):
             
 
         """Lädt alle Module (Semester 1-8) in das Select-Feld."""
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT name
@@ -476,7 +370,7 @@ class GradeEntryView(Screen):
                                                ))
             return
         
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT id
@@ -522,7 +416,7 @@ class GradeEntryView(Screen):
             """Lädt zuletzt gespeicherte Noten für das ausgewählte Modul."""
             if self.query_one("#module_select", Select).value == Select.BLANK:
                 return
-            with sqlite3.connect(DB_PATH) as conn:
+            with sqlite3.connect(self.app.db()) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT
@@ -584,13 +478,14 @@ class DisplayView(Screen):
         for child in list(self.container.children):
             child.remove()
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT
                     m.name,
                     m.semester,
                     m.assessment,
+                    m.description,
                     g.k1,
                     g.k2,
                     g.k1_weight,
@@ -615,8 +510,8 @@ class DisplayView(Screen):
 
         # Gruppiere die Daten pro Semester
         data_per_semester = defaultdict(list)
-        for (name, semester, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
-            data_per_semester[semester].append((name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type))
+        for (name, semester, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
+            data_per_semester[semester].append((name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type))
 
         for semester in range(1, 9):
             if not data_per_semester[semester]:
@@ -627,7 +522,7 @@ class DisplayView(Screen):
             table = DataTable()
             table.add_columns("Modul", "AS", "K1", "K2", "MSP", "EN", "Schnitt")
 
-            for (name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
+            for (name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
                 # Berechnung der Eingangsnote (EN) und Gesamtnote (final_average) je nach Berechnungstyp
                 en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
 
@@ -674,15 +569,18 @@ class DisplayView(Screen):
             semester_data = data_per_semester.get(semester, [])
             semesters.append(str(semester))
 
-            total_ects = 0
+            ects = [0,0] # Norm-Modules, Projects
             grades_in_sem = []
-            for (name, assessment, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
-                with sqlite3.connect(DB_PATH) as conn:
+            for (name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
+                with sqlite3.connect(self.app.db()) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
                     result = cursor.fetchone()
-                    if result:
-                        total_ects += result[0]
+                    if result[0]:
+                        if any(keyword in bezeichnung.lower() for keyword in ("projekt", "project")):
+                            ects[1] += result[0]
+                        else:
+                            ects[0] += result[0]
 
                 en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
 
@@ -691,7 +589,7 @@ class DisplayView(Screen):
                     grades_in_sem.append(final_average)
 
             avg = sum(grades_in_sem) / len(grades_in_sem) if grades_in_sem else 0
-            ects_values.append(total_ects)
+            ects_values.append(ects)
             average_values.append(avg)
             heatmap_values[semester]=(grades_in_sem if grades_in_sem else [0])
 
@@ -702,7 +600,7 @@ class DisplayView(Screen):
         # Bar Chart ECTS
         plot1 = PlotextPlot()
         plot1.plt.title("ECTS pro Semester")
-        plot1.plt.bar(semesters, ects_values, width = 0.3, color=32)
+        plot1.plt.stacked_bar(semesters, [*zip(*ects_values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
         plot1.plt.xlim(0, 9)
         visuals.mount(Label(""))
         visuals.mount(plot1)
@@ -722,8 +620,9 @@ class DisplayView(Screen):
         # Infos
         # ECTS Warnungen
         for s, ects in zip(semesters, ects_values):
-            if ects < 15:
-                visuals.mount(Label(f"Warnung: Semester {s} hat nur {ects} ECTS!", id=f"warn_{s}"))
+            ects_total = ects[0] + ects[1]
+            if ects[0] + ects[1] < 15:
+                visuals.mount(Label(f"Warnung: Semester {s} hat nur {ects_total} ECTS!", id=f"warn_{s}"))
         # Info Assessment
         ass_cnt = 0
         for s in semesters:
@@ -746,13 +645,30 @@ class StudyApp(App):
         ("q", "quit", "Quit")
     ]
 
+    def db(self) -> str:
+        if running_in_web(self):
+            return self.session.get("db_path", None)   # pro User
+        return DB_PATH  
+
     def on_mount(self):
-        initialize_db()
+        self.session = {}
+        if running_in_web(self):
+            init_auth_db()                                 # erzeugt users.db
+            self.install_screen(LoginScreen(),  name="login")
+            # DB für App wird im Loginscreen angelegt, falls diese fehlt.
+        else:
+            initialize_db(DB_PATH)                        
+        
         self.install_screen(StudyDesignView(), name="study_design")
         self.install_screen(GradeEntryView(), name="grade_entry")
         self.install_screen(DisplayView(), name="display")
         self.install_screen(GameView(), name="game")
-        self.push_screen("study_design")
+
+        if running_in_web(self):
+            self.push_screen("login")
+        else:
+            self.push_screen("study_design")
+
         self.easteregg_keys = "game"
 
     def action_switch_to_view(self, view_name: str) -> None:
