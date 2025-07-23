@@ -19,6 +19,7 @@ def initialize_db(DB_PATH):
                 description TEXT,
                 beschreibung TEXT, 
                 assessment INTEGER,
+                msp INTEGER,
                 ects INTEGER, 
                 dependencies TEXT, 
                 semester INTEGER

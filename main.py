@@ -139,6 +139,7 @@ class StudyDesignView(Screen):
                     name = module.get("bezeichnung") or ""
                     description = module.get("name") or ""
                     beschreibung = module.get("description") or ""
+                    msp = module.get("hasMsp") or ""
                     assessment = 1 if (module.get("assessment") or 0) else 0 
                     ects = module.get("ects") or 0
                     dependencies = module.get("dependingModulesIDs", {}) or []
@@ -150,13 +151,13 @@ class StudyDesignView(Screen):
                     if cursor.fetchone():
                         # Modul bereits vorhanden
                         cursor.execute(
-                            "UPDATE module SET mod_id = ?, description = ?, beschreibung = ?, assessment = ?, ects = ?, dependencies = ? WHERE name == ?",
-                            (mod_id, description, beschreibung, assessment, ects, json.dumps(dependencies), name)
+                            "UPDATE module SET mod_id = ?, description = ?, beschreibung = ?, assessment = ?, msp = ?, ects = ?, dependencies = ? WHERE name == ?",
+                            (mod_id, description, beschreibung, assessment, msp, ects, json.dumps(dependencies), name)
                         )
                     else:
                         cursor.execute(
-                            "INSERT INTO module (mod_id, name, description, beschreibung, assessment, ects, dependencies, semester) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-                            (mod_id, name, description, beschreibung, assessment, ects, json.dumps(dependencies))
+                            "INSERT INTO module (mod_id, name, description, beschreibung, assessment, msp, ects, dependencies, semester) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                            (mod_id, name, description, beschreibung, assessment, msp, ects, json.dumps(dependencies))
                         )
             conn.commit()
 
@@ -485,6 +486,7 @@ class DisplayView(Screen):
                     m.name,
                     m.semester,
                     m.assessment,
+                    m.msp,
                     m.description,
                     g.k1,
                     g.k2,
@@ -510,8 +512,8 @@ class DisplayView(Screen):
 
         # Gruppiere die Daten pro Semester
         data_per_semester = defaultdict(list)
-        for (name, semester, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in rows:
-            data_per_semester[semester].append((name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type))
+        for (name, semester, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in rows:
+            data_per_semester[semester].append((name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type))
 
         for semester in range(1, 9):
             if not data_per_semester[semester]:
@@ -520,21 +522,22 @@ class DisplayView(Screen):
             grade_table.mount(Label(f"Semester {semester}"))
 
             table = DataTable()
-            table.add_columns("Modul", "AS", "K1", "K2", "MSP", "EN", "Schnitt")
+            table.add_columns("Modul", "AS", "MSP", "K1", "K2", "MSP", "EN", "Schnitt")
 
-            for (name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in data_per_semester[semester]:
+            for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in data_per_semester[semester]:
                 # Berechnung der Eingangsnote (EN) und Gesamtnote (final_average) je nach Berechnungstyp
-                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
+                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
 
                 # Formatierung der Werte zur Anzeige
                 assessment_str = "x" if assessment == 1 else "-"
+                msp_str = "x" if msp == 1 else "-"
                 k1_str = f"{k1:.2f}" if k1 is not None else "-"
                 k2_str = f"{k2:.2f}" if k2 is not None else "-"
-                msp_str = f"{msp:.2f}" if msp is not None else "-"
+                mspn_str = f"{mspn:.2f}" if mspn is not None else (f"? {3.75*2-en:.2f}" if (en is not None and msp==1) else "-")
                 en_str = f"{en:.2f}" if en is not None else "-"
                 average_str = f"{final_average:.2f}" if final_average is not None else "-"
 
-                row = [name, assessment_str, k1_str, k2_str, msp_str, en_str, average_str]
+                row = [name, assessment_str, msp_str, k1_str, k2_str, mspn_str, en_str, average_str]
 
                 styled_row = []
                 for cell in row:
@@ -545,6 +548,8 @@ class DisplayView(Screen):
                             style = ""
                     elif parse_float(cell) >= 4.0:
                         style = "#03AC13"
+                    elif cell[0] == "?":
+                        style = "#AAAAAA"
                     else:
                         style = "#FF4500"
                     
@@ -571,7 +576,7 @@ class DisplayView(Screen):
 
             ects = [0,0] # Norm-Modules, Projects
             grades_in_sem = []
-            for (name, assessment, bezeichnung, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type) in semester_data:
+            for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in semester_data:
                 with sqlite3.connect(self.app.db()) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
@@ -582,7 +587,7 @@ class DisplayView(Screen):
                         else:
                             ects[0] += result[0]
 
-                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
+                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
 
                 # final_average in unsere Sammlung eintragen, falls definiert
                 if final_average is not None:
