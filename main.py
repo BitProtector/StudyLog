@@ -18,11 +18,8 @@ import json, sqlite3
 from rich.text import Text
 from rich.panel import Panel
 
-
-# Für den Dateidialog
-import tkinter
-from tkinter.filedialog import askopenfilename
 from collections import defaultdict
+
 
 
 # -----------------------------------------------------------------------------
@@ -112,15 +109,21 @@ class StudyDesignView(Screen):
             self.show_modules()
 
     def import_json(self):
-        """öffnet einen Dateidialog, liest ein JSON ein und fügt neue Module (ohne Duplikate) ein."""
-        root = tkinter.Tk()
-        root.withdraw()
+        if running_in_web(self.parent):
+            file_path = "Module v2.json"
+        else:
+            # Für den Dateidialog
+            import tkinter
+            from tkinter.filedialog import askopenfilename
+            """öffnet einen Dateidialog, liest ein JSON ein und fügt neue Module (ohne Duplikate) ein."""
+            root = tkinter.Tk()
+            root.withdraw()
 
-        file_path = askopenfilename(
-            title="JSON Datei auswählen",
-            filetypes=[("JSON Files", "*.json"), ("Alle Dateien", "*.*")]
-        )
-        root.destroy()
+            file_path = askopenfilename(
+                title="JSON Datei auswählen",
+                filetypes=[("JSON Files", "*.json"), ("Alle Dateien", "*.*")]
+            )
+            root.destroy()
 
         if not file_path:
             return  # Abbruch, wenn keine Datei ausgewählt
