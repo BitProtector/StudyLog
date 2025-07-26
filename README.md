@@ -13,6 +13,7 @@ Ein leichtgewichtiges Konsolentool mit GUI (Textual), zur Verwaltung von Modulen
 - Hinweise bez. Assessment und ECTS-Punkten werden eingeblendet.
 - Konsolen-GUI basierend auf [Textual](https://github.com/Textualize/textual)
 - Multi-User-Funktionalität, damit die Applikation als Webservice betrieben werden kann.
+- Kann als Docker deployed werden
 
 ## Voraussetzungen
 
@@ -42,6 +43,7 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
+
 ### 5. (optional) Kompilieren einer EXE
 ```bash
 pyinstaller --noconfirm --onefile --console app.py
@@ -51,6 +53,17 @@ pyinstaller --noconfirm --onefile --console app.py
 Für diesen Schritt ist das ["Windows SDK"](https://developer.microsoft.com/de-de/windows/downloads/windows-sdk/) erforderlich.
 ```bash
 signtool sign /a /tr http://timestamp.digicert.com /td sha256 /fd sha256 dist\main.exe
+```
+
+### 7. (optional) Docker-Image bauen und starten
+Um die App als Docker-Container zu deployen, kann das Image direkt von diesem Repo gebaut werden.
+```bash
+docker build -t studylog-web .
+```
+Anschliessend kann das Image als Container gestartet werden.
+Als APP_PUBLIC_URL Variable muss die IP des Docker-Hosts bzw. beim Einsatz eines Revereproxys die öffentliche IP/URL angegeben werden.
+```bash
+docker run -e APP_PUBLIC_URL=http://192.168.1.30:8000 -p 192.168.1.30:8000:8000 studylog-web
 ```
 
 ### Struktur des JSON-Files, welches die Module enthält.
