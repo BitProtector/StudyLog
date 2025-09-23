@@ -71,7 +71,7 @@ class StudyDesignView(Screen):
                     yield Button("Modul löschen", id="delete_module")
                 with VerticalScroll():
                     yield Label("--- Module zuweisen ---")
-                    yield Select(((str(i), i) for i in range(0,9)), id="update_semester_input")
+                    yield Select(((str(i) if not i == 9 else "Anrechnung", i) for i in range(0,10)), id="update_semester_input")
                     yield Input(placeholder="Modulname", id="update_module_input")
                     #yield Input(placeholder="Neues Semester (1-8)", id="update_semester_input")
                     yield Button("Update Semester", id="update_semester")
@@ -173,7 +173,7 @@ class StudyDesignView(Screen):
         semester_val = parse_int(semester_str)
         if not name:
             return
-        if semester_val is None or semester_val < 1 or semester_val > 8:
+        if semester_val is None or semester_val < 1 or semester_val > 9:
             semester_val = 0
 
         with sqlite3.connect(self.app.db()) as conn:
@@ -210,7 +210,7 @@ class StudyDesignView(Screen):
         if semester_val == Select.BLANK:
             return
         
-        if semester_val is None or semester_val < 1 or semester_val > 8:
+        if semester_val is None or semester_val < 1 or semester_val > 9:
             semester_val = 0
         
         with sqlite3.connect(self.app.db()) as conn:
@@ -341,13 +341,13 @@ class GradeEntryView(Screen):
         self.query_one("#calc_type", Select).visible = False
             
 
-        """Lädt alle Module (Semester 1-8) in das Select-Feld."""
+        """Lädt alle Module (Semester 1-9) in das Select-Feld."""
         with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT name
                 FROM module
-                WHERE semester BETWEEN 1 AND 8
+                WHERE semester BETWEEN 1 AND 9
                 ORDER BY semester, name
             ''')
             rows = cursor.fetchall()
@@ -467,6 +467,29 @@ class DisplayView(Screen):
     Zeigt Module getrennt nach Semester an.
     Für jedes Semester wird eine DataTable erstellt.
     """
+    CSS = """
+    .Header2 {
+        align: center middle;
+        height: 3;
+    }
+    .Grade_sum {
+        align: right middle;
+        height: 3;
+        border: none;
+        margin-right: 1;
+    }
+    .ECTS_sum {
+        align: left middle;
+        height: 3;
+        border: none;
+        margin-left: 1;
+    }
+    .Grade_sum Label {
+        width: 100%;
+        text-align: right;
+    }
+    """
+
     def __init__(self):
         super().__init__()
         # Container für dynamisch erzeugte Tabellen
@@ -474,6 +497,13 @@ class DisplayView(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
+        with HorizontalScroll(classes="Header2"):
+            with VerticalScroll(classes="ECTS_sum"):
+                yield Label ("Eingeplante ECTS-Punkte: xxx/180", id="ECTS_plan")
+                yield Label ("Erreichte ECTS-Punkte:   xxx/180", id="ECTS_fix")
+            with VerticalScroll(classes="Grade_sum"):
+                yield Label("Notenschnitt: x.xx", id="grade_sum")
+                yield Label("ToR:  x.x", id="tor")
         yield self.container
         yield Footer()
 
@@ -505,7 +535,7 @@ class DisplayView(Screen):
                     FROM grades
                     WHERE module_id = m.id
                   )
-                WHERE m.semester BETWEEN 1 AND 8
+                WHERE m.semester BETWEEN 1 AND 9
                 ORDER BY m.semester, m.name
             ''')
             rows = cursor.fetchall()
@@ -518,11 +548,11 @@ class DisplayView(Screen):
         for (name, semester, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in rows:
             data_per_semester[semester].append((name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type))
 
-        for semester in range(1, 9):
+        for semester in range(1, 10):
             if not data_per_semester[semester]:
                 continue
 
-            grade_table.mount(Label(f"Semester {semester}"))
+            grade_table.mount(Label(f"Semester {semester}" if not semester == 9 else f"Anrechnungen"))
 
             table = DataTable()
             table.add_columns("Modul", "AS", "MSP", "K1", "K2", "MSP", "EN", "Schnitt")
@@ -543,10 +573,13 @@ class DisplayView(Screen):
                 row = [name, assessment_str, msp_str, k1_str, k2_str, mspn_str, en_str, average_str]
 
                 styled_row = []
-                for cell in row:
+                for idx, cell in enumerate(row):
                     if parse_float(cell) is None:
                         if cell == "x":
                             style = "#FF8C00"
+                        elif idx == 0:
+                            if (parse_float(row[-1]) is not None and parse_float(row[-1]) >= 3.75) or semester == 9:
+                                style = "#03AC13"
                         else:
                             style = ""
                     elif parse_float(cell) >= 4.0:
@@ -573,13 +606,14 @@ class DisplayView(Screen):
         average_values = []
         heatmap_values = {}
 
-        for semester in range(1, 9):
+        for semester in range(1, 10):
             semester_data = data_per_semester.get(semester, [])
             semesters.append(str(semester))
 
-            ects = [0,0] # Norm-Modules, Projects
+            ects = [0, 0, 0] # Norm-Modules, Projects, bestanden
             grades_in_sem = []
             for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in semester_data:
+                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
                 with sqlite3.connect(self.app.db()) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
@@ -589,10 +623,10 @@ class DisplayView(Screen):
                             ects[1] += result[0]
                         else:
                             ects[0] += result[0]
+                        if (final_average is not None and final_average >= 3.75) or semester == 9:
+                            ects[2] += result[0]
 
-                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
-
-                # final_average in unsere Sammlung eintragen, falls definiert
+                # final_average in Sammlung eintragen, falls definiert
                 if final_average is not None:
                     grades_in_sem.append(final_average)
 
@@ -600,6 +634,14 @@ class DisplayView(Screen):
             ects_values.append(ects)
             average_values.append(avg)
             heatmap_values[semester]=(grades_in_sem if grades_in_sem else [0])
+        
+        all_avg = sum(average_values)/sum(1 for x in average_values if x != 0)
+        all_ects = sum(sum(x[:2]) for x in ects_values)
+        success_etcs = sum(x[2] for x in ects_values)
+        self.query_one("#grade_sum", Label).update(f"Notenschnitt: {all_avg:.2f}")
+        self.query_one("#tor", Label).update(f"ToR:  {all_avg:.1f}")
+        self.query_one("#ECTS_plan", Label).update(f"Eingeplante ECTS-Punkte: {all_ects}/180")
+        self.query_one("#ECTS_fix", Label).update(f"Erreichte ECTS-Punkte: {success_etcs}/180   -> {(success_etcs/1.8):.1f}%")
 
         # Visualisierung mit plotext vorbereiten
         visuals = VerticalScroll()
@@ -608,18 +650,23 @@ class DisplayView(Screen):
         # Bar Chart ECTS
         plot1 = PlotextPlot()
         plot1.plt.title("ECTS pro Semester")
-        plot1.plt.stacked_bar(semesters, [*zip(*ects_values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
+        values = [x[:2] for x in ects_values[:8]]
+        plot1.plt.stacked_bar(semesters, [*zip(*values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
         plot1.plt.xlim(0, 9)
+        plot1.plt.ylim(0, 5+max([sum(x) for x in values]))
+        plot1.plt.yticks([i for i in range(0, 5+max([sum(x) for x in values]), 5)])
+        [plot1.plt.text(value[0], y = value[0], x = parse_int(semesters[idx]), alignment = 'center', background=32 if value[1] != 0 else (3,172,19), color=255) for idx, value in enumerate([(sum(x), x[1]) for x in values])]
+        
         visuals.mount(Label(""))
         visuals.mount(plot1)
 
         # Bar Chart Durchschnitt
         plot2 = PlotextPlot()
         plot2.plt.title("Notendurchschnitt pro Semester")
-        plot2.plt.bar(semesters, average_values, orientation = "h", width = 0.001, color=32)
+        plot2.plt.bar(semesters[:8], average_values[:8], orientation = "h", width = 0.001, color=32)
         plot2.plt.xlim(1, 6)
         # Werte der Balken anzeigen
-        [plot2.plt.text(round(value,2), x = value, y = parse_int(semesters[idx]), alignment = 'right', background=32, color=255) for idx, value in enumerate(average_values)]
+        [plot2.plt.text(round(value,2), x = value, y = parse_int(semesters[idx]), alignment = 'right', background=32, color=255) for idx, value in enumerate(average_values[:8])]
         visuals.mount(Label(""))
         visuals.mount(plot2)
 
