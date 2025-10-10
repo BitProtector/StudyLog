@@ -577,9 +577,8 @@ class DisplayView(Screen):
                     if parse_float(cell) is None:
                         if cell == "x":
                             style = "#FF8C00"
-                        elif idx == 0:
-                            if (parse_float(row[-1]) is not None and parse_float(row[-1]) >= 3.75) or semester == 9:
-                                style = "#03AC13"
+                        elif idx == 0 and ((parse_float(row[-1]) is not None and parse_float(row[-1]) >= 3.75) or semester == 9):
+                            style = "#03AC13"
                         else:
                             style = ""
                     elif parse_float(cell) >= 4.0:
@@ -604,15 +603,17 @@ class DisplayView(Screen):
         semesters = []
         ects_values = []
         average_values = []
-        heatmap_values = {}
 
         for semester in range(1, 10):
             semester_data = data_per_semester.get(semester, [])
             semesters.append(str(semester))
+            if not semester_data:
+                continue
 
             ects = [0, 0, 0] # Norm-Modules, Projects, bestanden
             grades_in_sem = []
             for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in semester_data:
+
                 en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
                 with sqlite3.connect(self.app.db()) as conn:
                     cursor = conn.cursor()
@@ -630,12 +631,12 @@ class DisplayView(Screen):
                 if final_average is not None:
                     grades_in_sem.append(final_average)
 
-            avg = sum(grades_in_sem) / len(grades_in_sem) if grades_in_sem else 0
+            if grades_in_sem:
+                avg = sum(grades_in_sem) / len(grades_in_sem) 
+                average_values.append(avg)
             ects_values.append(ects)
-            average_values.append(avg)
-            heatmap_values[semester]=(grades_in_sem if grades_in_sem else [0])
         
-        all_avg = sum(average_values)/sum(1 for x in average_values if x != 0)
+        all_avg = (sum(average_values)/sum(1 for x in average_values if x != 0)) if average_values else 0
         all_ects = sum(sum(x[:2]) for x in ects_values)
         success_etcs = sum(x[2] for x in ects_values)
         self.query_one("#grade_sum", Label).update(f"Notenschnitt: {all_avg:.2f}")
@@ -651,22 +652,24 @@ class DisplayView(Screen):
         plot1 = PlotextPlot()
         plot1.plt.title("ECTS pro Semester")
         values = [x[:2] for x in ects_values[:8]]
-        plot1.plt.stacked_bar(semesters, [*zip(*values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
-        plot1.plt.xlim(0, 9)
-        plot1.plt.ylim(0, 5+max([sum(x) for x in values]))
-        plot1.plt.yticks([i for i in range(0, 5+max([sum(x) for x in values]), 5)])
-        [plot1.plt.text(value[0], y = value[0], x = parse_int(semesters[idx]), alignment = 'center', background=32 if value[1] != 0 else (3,172,19), color=255) for idx, value in enumerate([(sum(x), x[1]) for x in values])]
-        
+        if values:
+            plot1.plt.stacked_bar(semesters, [*zip(*values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
+            plot1.plt.xlim(0, 9)
+            plot1.plt.ylim(0, 5+max([sum(x) for x in values]))
+            plot1.plt.yticks([i for i in range(0, 5+max([sum(x) for x in values]), 5)])
+            [plot1.plt.text(value[0], y = value[0], x = parse_int(semesters[idx]), alignment = 'center', background=32 if value[1] != 0 else (3,172,19), color=255) for idx, value in enumerate([(sum(x), x[1]) for x in values])]
+            
         visuals.mount(Label(""))
         visuals.mount(plot1)
 
         # Bar Chart Durchschnitt
         plot2 = PlotextPlot()
         plot2.plt.title("Notendurchschnitt pro Semester")
-        plot2.plt.bar(semesters[:8], average_values[:8], orientation = "h", width = 0.001, color=32)
-        plot2.plt.xlim(1, 6)
-        # Werte der Balken anzeigen
-        [plot2.plt.text(round(value,2), x = value, y = parse_int(semesters[idx]), alignment = 'right', background=32, color=255) for idx, value in enumerate(average_values[:8])]
+        if average_values:
+            plot2.plt.bar(semesters[:8], average_values[:8], orientation = "h", width = 0.001, color=32)
+            plot2.plt.xlim(1, 6)
+            # Werte der Balken anzeigen
+            [plot2.plt.text(round(value,2), x = value, y = parse_int(semesters[idx]), alignment = 'right', background=32, color=255) for idx, value in enumerate(average_values[:8])]
         visuals.mount(Label(""))
         visuals.mount(plot2)
 
