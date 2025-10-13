@@ -3,52 +3,43 @@ from textual.screen import Screen
 from textual.widgets import Input, Button, Label
 from textual.containers import Container, Horizontal
 from textual.validation import Function
-from textual import on
+from textual import on, events
 import sqlite3, re
 from StudyLogApp.db import check_user, add_user, initialize_db
 from StudyLogApp.utils import MessageBox
 
 class LoginScreen(Screen):
+    # -- CSS --
     CSS = """
-            Screen {
-                align: center middle;
-                background: $surface;
-            }
+            Screen { align: center middle; background: $surface; padding: 1 2; }
+
+            /* Aussen voll breit, Inhalt zentrieren */
             #login_box {
-                width: 40%;
-                padding: 2 4;
+                width: 100%;
+                padding: 2 3;
                 layout: vertical;
                 align: center middle;
+                content-align: center middle;   /* zentriert Kinder horizontal */
                 background: $background;
                 border: none;
             }
+
+            /* Innenrahmen: begrenzte Breite -> wirkt mittig */
             #login_frame {
                 border: round $accent;
                 padding: 1 2;
                 layout: vertical;
                 align: center middle;
-                width: 100%;
-            }
-            #login_title {
-                content-align: center middle;
-                margin-bottom: 1;
-            }
-            #login_buttons {
-                layout: horizontal;
-                content-align: center middle;
-
-            }
-            Input {
-                width: 100%;
-                margin: 1 0;
+                max-width: 72;                  
             }
 
-            #login_buttons Button {
-                width: 48%;
-                margin: 1 1 0 0;
-                margin: 0 1;
-            }
-    """
+            #login_title { content-align: center middle; margin-bottom: 1; }
+            Input { width: 100%; margin: 1 0; }
+
+            #login_buttons { layout: horizontal; width: 100%; }
+            #login_buttons Button { width: 1fr; margin: 0 1 0 0; }   /* kleiner Abstand */
+
+            """
 
     def compose(self):
         # Äussere Box, zentriert im Screen
@@ -70,8 +61,8 @@ class LoginScreen(Screen):
         except ValueError:
             return False
 
-
     @on(Button.Pressed, "#login")
+    @on(Input.Submitted, "#pw")
     def do_login(self):
         u = self.query_one("#user", Input).value.strip()
         p = self.query_one("#pw", Input).value
