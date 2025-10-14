@@ -2,7 +2,7 @@ import sqlite3
 import json
 import sqlite3, bcrypt, pathlib
 
-AUTH_DB = "users.db"
+AUTH_DB = "data/users.db"
 DB_PATH = "studium.db"  # Datenbankpfad
 
 # -----------------------------------------------------------------------------
@@ -51,7 +51,7 @@ def init_auth_db():
 
 def add_user(username: str, password: str):
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-    db_path = f"studium_{username}.db"
+    db_path = f"data/studium_{username}.db"
     with sqlite3.connect(AUTH_DB) as c:
         c.execute("INSERT INTO users VALUES (?,?,?)",
                   (username, pw_hash, db_path))

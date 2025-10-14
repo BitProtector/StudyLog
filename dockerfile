@@ -12,7 +12,7 @@ ENV APP_HOST=0.0.0.0 \
 # 3. Abhaengigkeiten zuerst kopieren (Layer‑Cache!)
 COPY requirements_web.txt .
 COPY main.py .
-COPY ["Module v2.json", "."]
+COPY ["data", "./data"]
 COPY StudyLogApp StudyLogApp
 
 

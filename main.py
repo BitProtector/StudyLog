@@ -110,7 +110,7 @@ class StudyDesignView(Screen):
 
     def import_json(self):
         if running_in_web(self.parent):
-            file_path = "Module v2.json"
+            file_path = "data/Module v2.json"
         else:
             # Für den Dateidialog
             import tkinter
