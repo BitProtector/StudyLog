@@ -17,7 +17,9 @@ COPY StudyLogApp StudyLogApp
 
 
 # 4. Installieren – ohne Cache im Image zu belassen
-RUN pip install --no-cache-dir -r requirements_web.txt
+RUN  ln -sf /usr/share/zoneinfo/Europe/Zurich /etc/timezone && \
+     ln -sf /usr/share/zoneinfo/Europe/Zurich /etc/localtime && \
+     pip install --no-cache-dir -r requirements_web.txt
 
 
 # 6. Startkommando
