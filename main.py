@@ -8,7 +8,14 @@ from textual_plotext import PlotextPlot
 from plotext._figure import _figure_class
 
 from StudyLogApp.extension import GameView
-from StudyLogApp.calculate import compute_final_grade
+from StudyLogApp.calculate import (
+    MAX_GRADE,
+    MIN_GRADE,
+    PASSING_GRADE,
+    compute_final_grade,
+    required_msp_for_passing,
+    validate_grade_input,
+)
 from StudyLogApp.utils import running_in_web, parse_int, parse_float, MessageBox
 from StudyLogApp.db import initialize_db, init_auth_db, DB_PATH
 from StudyLogApp.login import LoginScreen
@@ -142,19 +149,19 @@ class StudyDesignView(Screen):
                     name = module.get("bezeichnung") or ""
                     description = module.get("name") or ""
                     beschreibung = module.get("description") or ""
-                    msp = module.get("hasMsp") or ""
+                    msp = int(bool(module.get("hasMsp")))
                     assessment = 1 if (module.get("assessment") or 0) else 0 
                     ects = module.get("ects") or 0
                     dependencies = module.get("dependingModulesIDs", {}) or []
                     if not name:
                         continue
-                    if not id:
+                    if not mod_id:
                         continue
-                    cursor.execute("SELECT 1 FROM module WHERE name = ?", (name,))
+                    cursor.execute("SELECT 1 FROM module WHERE name = ? COLLATE NOCASE", (name,))
                     if cursor.fetchone():
                         # Modul bereits vorhanden
                         cursor.execute(
-                            "UPDATE module SET mod_id = ?, description = ?, beschreibung = ?, assessment = ?, msp = ?, ects = ?, dependencies = ? WHERE name == ?",
+                            "UPDATE module SET mod_id = ?, description = ?, beschreibung = ?, assessment = ?, msp = ?, ects = ?, dependencies = ? WHERE name = ? COLLATE NOCASE",
                             (mod_id, description, beschreibung, assessment, msp, ects, json.dumps(dependencies), name)
                         )
                     else:
@@ -178,6 +185,14 @@ class StudyDesignView(Screen):
 
         with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
+            existing = cursor.execute(
+                "SELECT 1 FROM module WHERE name = ? COLLATE NOCASE", (name,)
+            ).fetchone()
+            if existing:
+                self.parent.push_screen(MessageBox("Ein Modul mit diesem Namen existiert bereits.",
+                                                   [[Button("ok", id="close", variant="success"), False]]
+                                                   ))
+                return
             cursor.execute(
                 "INSERT INTO module (name, description, ects, dependencies, semester) VALUES (?, ?, ?, ?, ?)",
                 (name, description, ects, json.dumps([]), semester_val)
@@ -191,13 +206,13 @@ class StudyDesignView(Screen):
             return
         with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM module WHERE name = ?", (delete_module_name,))
+            cursor.execute("SELECT id FROM module WHERE name = ? COLLATE NOCASE", (delete_module_name,))
             result = cursor.fetchone()
             if result is None:
                 return  # Modul nicht gefunden
             module_id = result[0]
             cursor.execute("DELETE FROM grades WHERE module_id = ?", (module_id,))
-            cursor.execute("DELETE FROM module WHERE name = ?", (delete_module_name,))
+            cursor.execute("DELETE FROM module WHERE name = ? COLLATE NOCASE", (delete_module_name,))
             conn.commit()
 
     def update_semester(self):
@@ -215,26 +230,42 @@ class StudyDesignView(Screen):
         
         with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
-            # Abhängigkeiten aus Spalte dependencies lesen
-            cursor.execute("SELECT dependencies FROM module WHERE name = ?", (module_name,))
+            # Abhaengigkeiten aus Spalte dependencies lesen. Die Suche muss
+            # dieselbe Gross-/Kleinschreibungsregel wie das Update verwenden.
+            cursor.execute("SELECT dependencies FROM module WHERE name = ? COLLATE NOCASE", (module_name,))
             row = cursor.fetchone()
-            if row is not None and row[0]:
-                dependencies = json.loads(row[0])
-            else:
-                dependencies = []
-            
+            try:
+                dependencies = json.loads(row[0]) if row is not None and row[0] else []
+            except (TypeError, json.JSONDecodeError):
+                self.parent.push_screen(MessageBox("Die Modulabhaengigkeiten sind ungueltig gespeichert.",
+                                                   [[Button("ok", id="close", variant="success"), False]]
+                                                   ))
+                return
+
+            dependency_rows = {}
+            for dependency in dependencies:
+                dependency_rows[dependency] = cursor.execute(
+                    "SELECT semester, name FROM module WHERE mod_id = ?", (dependency,)
+                ).fetchone()
+
         # Prüfe alle Abhängigkeiten
         for dependency in dependencies:
-            cursor.execute("SELECT semester, name FROM module WHERE mod_id = ?", (dependency,))
-            row_dep = cursor.fetchone()
-            if row_dep is None or ((row_dep[0] > semester_val or row_dep[0] == 0) and semester_val != 0):
+            row_dep = dependency_rows[dependency]
+            dependency_missing = row_dep is None
+            dependency_not_earlier = (
+                not dependency_missing
+                and semester_val != 0
+                and (row_dep[0] is None or row_dep[0] == 0 or row_dep[0] >= semester_val)
+            )
+            if dependency_missing or dependency_not_earlier:
                 if not dependency in self.ignore_dependencies:
                     # Definiere Call-Back Funktion für MsgBox, welche bei "Ignorieren" aufgerufen werden kann
                     def ignore_dependency():
                         self.ignore_dependencies.append(dependency)
                         # Führe diese funktion nochmals aus.
                         self.update_semester()
-                    self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {row_dep[1]} erfüllen.", 
+                    dependency_name = row_dep[1] if row_dep is not None else f"Modul-ID {dependency}"
+                    self.parent.push_screen(MessageBox(f"Modul erfuellt nicht alle Bedingungen! \nZuerst {dependency_name} erfüllen.",
                                                         [
                                                             [Button("Abbrechen", id="close", variant="success"), False],
                                                             [Button("Ignorieren", id="acknowledge", variant="warning"), ignore_dependency]
@@ -321,15 +352,15 @@ class GradeEntryView(Screen):
             with HorizontalScroll(classes="entry_box"):
                 yield Label("Klausur 1", classes="entry_label")
                 yield Input(placeholder="K1", id="input_k1")
-                yield Input(placeholder="K1 Gewicht", id="input_k1_weight")
+                yield Input(placeholder="K1 Gewicht (relativ)", id="input_k1_weight")
             with HorizontalScroll(classes="entry_box"):
-                yield Label("Klausur 1", classes="entry_label")
+                yield Label("Klausur 2", classes="entry_label")
                 yield Input(placeholder="K2", id="input_k2")
-                yield Input(placeholder="K2 Gewicht", id="input_k2_weight")
+                yield Input(placeholder="K2 Gewicht (relativ)", id="input_k2_weight")
             with HorizontalScroll(classes="entry_box"):
                 yield Label("Modulschluss Prüfung", classes="entry_label")
                 yield Input(placeholder="MSP", id="input_msp")
-                yield Input(placeholder="MSP Gewicht", id="input_msp_weight")
+                yield Input(placeholder="MSP Gewicht (0-1 oder %)", id="input_msp_weight")
             yield Button("Speichern", id="save_grade")
         yield Footer()
 
@@ -358,14 +389,13 @@ class GradeEntryView(Screen):
     def save_grade(self, event: Button.Pressed) -> None:
         if event.button.id != "save_grade":
             return
+        raw_values = {
+            key: self.query_one(f"#input_{key}", Input).value
+            for key in ("k1", "k1_weight", "k2", "k2_weight", "msp", "msp_weight")
+        }
         values = {
             "module_name": self.query_one("#module_select", Select).value,
-            "k1": parse_float(self.query_one("#input_k1", Input).value),
-            "k1_weight": parse_float(self.query_one("#input_k1_weight", Input).value),
-            "k2": parse_float(self.query_one("#input_k2", Input).value),
-            "k2_weight": parse_float(self.query_one("#input_k2_weight", Input).value),
-            "msp": parse_float(self.query_one("#input_msp", Input).value),
-            "msp_weight": parse_float(self.query_one("#input_msp_weight", Input).value),
+            **{key: parse_float(value) for key, value in raw_values.items()},
             "calc_type": self.query_one("#calc_type", Select).value,
         }
         if self.query_one("#module_select", Select).value == Select.BLANK:
@@ -373,13 +403,24 @@ class GradeEntryView(Screen):
                                                [[Button("ok", id="close", variant="success"), False]]
                                                ))
             return
-        
+
+        invalid_number = next(
+            (key for key, raw_value in raw_values.items()
+             if raw_value.strip() and values[key] is None),
+            None,
+        )
+        if invalid_number:
+            self.parent.push_screen(MessageBox(f"Ungültiger Zahlenwert für {invalid_number}.",
+                                               [[Button("ok", id="close", variant="success"), False]]
+                                               ))
+            return
+
         with sqlite3.connect(self.app.db()) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id
+                SELECT id, msp
                 FROM module
-                WHERE name == ?
+                WHERE name = ? COLLATE NOCASE
             ''', (values["module_name"],))
             result = cursor.fetchone()
             if result is None:
@@ -387,11 +428,27 @@ class GradeEntryView(Screen):
                                                    [[Button("ok", id="close", variant="success"), False]]
                                                    ))
                 return
-            module_id = result[0]
+            module_id, _ = result
+            validation_error = validate_grade_input(
+                values["k1"], values["k2"], values["k1_weight"], values["k2_weight"],
+                values["msp"], values["msp_weight"], values["calc_type"],
+            )
+            if validation_error:
+                self.parent.push_screen(MessageBox(validation_error,
+                                                   [[Button("ok", id="close", variant="success"), False]]
+                                                   ))
+                return
+
+            # Gewichte anderer Berechnungstypen sind nicht Teil der gespeicherten
+            # Formel und werden daher nicht als veraltete Eingabe mitgespeichert.
+            if values["calc_type"] != 3:
+                values["k1_weight"] = None
+                values["k2_weight"] = None
+                values["msp_weight"] = None
             cursor.execute(
-                '''INSERT OR REPLACE INTO grades
-                   (module_id, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type)
-                   VALUES (?, ?, ?, ?, ?, ?, ?,?)''',
+                '''INSERT INTO grades
+                   (module_id, k1, k2, k1_weight, k2_weight, msp, msp_weight, calc_type, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)''',
                 (
                     module_id,
                     values["k1"],
@@ -438,7 +495,7 @@ class GradeEntryView(Screen):
                         FROM grades
                         WHERE module_id = m.id
                     )
-                    WHERE m.name == ?
+                    WHERE m.name = ? COLLATE NOCASE
                     ORDER BY m.semester, m.name
                 ''', (event.value,))
                 result = cursor.fetchone()
@@ -559,14 +616,26 @@ class DisplayView(Screen):
 
             for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in data_per_semester[semester]:
                 # Berechnung der Eingangsnote (EN) und Gesamtnote (final_average) je nach Berechnungstyp
-                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
+                en, final_average = compute_final_grade(
+                    k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type,
+                    requires_msp=bool(msp),
+                )
 
                 # Formatierung der Werte zur Anzeige
                 assessment_str = "x" if assessment == 1 else "-"
                 msp_str = "x" if msp == 1 else "-"
                 k1_str = f"{k1:.2f}" if k1 is not None else "-"
                 k2_str = f"{k2:.2f}" if k2 is not None else "-"
-                mspn_str = f"{mspn:.2f}" if mspn is not None else (f"? {3.75*2-en:.2f}" if (en is not None and msp==1) else "-")
+                required_msp = required_msp_for_passing(en, msp_weight, calc_type)
+                if mspn is not None:
+                    mspn_str = f"{mspn:.2f}"
+                elif msp == 1 and required_msp is not None:
+                    if required_msp > MAX_GRADE:
+                        mspn_str = f"? > {MAX_GRADE:.2f}"
+                    else:
+                        mspn_str = f"? {max(MIN_GRADE, required_msp):.2f}"
+                else:
+                    mspn_str = "-"
                 en_str = f"{en:.2f}" if en is not None else "-"
                 average_str = f"{final_average:.2f}" if final_average is not None else "-"
 
@@ -574,17 +643,17 @@ class DisplayView(Screen):
 
                 styled_row = []
                 for idx, cell in enumerate(row):
-                    if parse_float(cell) is None:
+                    if isinstance(cell, str) and cell.startswith("?"):
+                        style = "#AAAAAA"
+                    elif parse_float(cell) is None:
                         if cell == "x":
                             style = "#FF8C00"
-                        elif idx == 0 and ((parse_float(row[-1]) is not None and parse_float(row[-1]) >= 3.75) or semester == 9):
+                        elif idx == 0 and ((parse_float(row[-1]) is not None and parse_float(row[-1]) >= PASSING_GRADE) or semester == 9):
                             style = "#03AC13"
                         else:
                             style = ""
-                    elif parse_float(cell) >= 4.0:
+                    elif parse_float(cell) >= PASSING_GRADE:
                         style = "#03AC13"
-                    elif cell[0] == "?":
-                        style = "#AAAAAA"
                     else:
                         style = "#FF4500"
                     
@@ -600,43 +669,49 @@ class DisplayView(Screen):
 
     def render_visuals(self, data_per_semester):
         # ECTS und Durchschnittsverlauf vorbereiten
-        semesters = []
+        semesters = [str(semester) for semester in range(1, 10)]
         ects_values = []
         average_values = []
+        all_grades = []
+        passed_assessments = []
 
         for semester in range(1, 10):
             semester_data = data_per_semester.get(semester, [])
-            semesters.append(str(semester))
-            if not semester_data:
-                continue
-
             ects = [0, 0, 0] # Norm-Modules, Projects, bestanden
             grades_in_sem = []
+            passed_assessment_count = 0
             for (name, assessment, msp, bezeichnung, k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type) in semester_data:
-
-                en, final_average = compute_final_grade(k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type)
+                en, final_average = compute_final_grade(
+                    k1, k2, k1_weight, k2_weight, mspn, msp_weight, calc_type,
+                    requires_msp=bool(msp),
+                )
                 with sqlite3.connect(self.app.db()) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT ects FROM module WHERE name = ?", (name,))
+                    cursor.execute("SELECT ects FROM module WHERE name = ? COLLATE NOCASE", (name,))
                     result = cursor.fetchone()
-                    if result[0]:
-                        if any(keyword in bezeichnung.lower() for keyword in ("projekt", "project")):
-                            ects[1] += result[0]
+                    module_ects = result[0] if result and result[0] is not None else 0
+                    if module_ects:
+                        if isinstance(bezeichnung, str) and any(keyword in bezeichnung.lower() for keyword in ("projekt", "project")):
+                            ects[1] += module_ects
                         else:
-                            ects[0] += result[0]
-                        if (final_average is not None and final_average >= 3.75) or semester == 9:
-                            ects[2] += result[0]
+                            ects[0] += module_ects
+                        if (final_average is not None and final_average >= PASSING_GRADE) or semester == 9:
+                            ects[2] += module_ects
 
-                # final_average in Sammlung eintragen, falls definiert
+                # Nur endgueltige Noten fliessen in Schnitt und Assessment ein.
                 if final_average is not None:
                     grades_in_sem.append(final_average)
+                    all_grades.append(final_average)
+                    if assessment == 1 and final_average >= PASSING_GRADE:
+                        passed_assessment_count += 1
 
-            if grades_in_sem:
-                avg = sum(grades_in_sem) / len(grades_in_sem) 
-                average_values.append(avg)
+            average_values.append(
+                sum(grades_in_sem) / len(grades_in_sem) if grades_in_sem else 0
+            )
             ects_values.append(ects)
-        
-        all_avg = (sum(average_values)/sum(1 for x in average_values if x != 0)) if average_values else 0
+            passed_assessments.append(passed_assessment_count)
+
+        all_avg = sum(all_grades) / len(all_grades) if all_grades else 0
         all_ects = sum(sum(x[:2]) for x in ects_values)
         success_etcs = sum(x[2] for x in ects_values)
         self.query_one("#grade_sum", Label).update(f"Notenschnitt: {all_avg:.2f}")
@@ -653,7 +728,7 @@ class DisplayView(Screen):
         plot1.plt.title("ECTS pro Semester")
         values = [x[:2] for x in ects_values[:8]]
         if values:
-            plot1.plt.stacked_bar(semesters, [*zip(*values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
+            plot1.plt.stacked_bar(semesters[:8], [*zip(*values)], width = 0.3, color=[(3,172,19),32], labels=["Module", "Projekte"])
             plot1.plt.xlim(0, 9)
             plot1.plt.ylim(0, 5+max([sum(x) for x in values]))
             plot1.plt.yticks([i for i in range(0, 5+max([sum(x) for x in values]), 5)])
@@ -666,7 +741,7 @@ class DisplayView(Screen):
         plot2 = PlotextPlot()
         plot2.plt.title("Notendurchschnitt pro Semester")
         plot2.plt.xticks([0.5, 1, 2, 3, 4, 4.5, 5, 5.5, 6, 6.5])
-        if average_values:
+        if any(average_values[:8]):
             plot2.plt.bar(semesters[:8], average_values[:8], orientation = "h", width = 0.001, color=32)
             plot2.plt.xlim(1, 6)
             # Werte der Balken anzeigen
@@ -678,15 +753,14 @@ class DisplayView(Screen):
         visuals.mount(Label("Hinweise:"))
         # Infos
         # ECTS Warnungen
-        for s, ects in zip(semesters, ects_values):
+        for s, ects in zip(semesters[:8], ects_values[:8]):
             ects_total = ects[0] + ects[1]
-            if ects[0] + ects[1] < 15:
+            if data_per_semester[int(s)] and ects_total < 15:
                 visuals.mount(Label(f"Warnung: Semester {s} hat nur {ects_total} ECTS!", id=f"warn_{s}"))
         # Info Assessment
         ass_cnt = 0
-        for s in semesters:
-            for m in data_per_semester[int(s)]:
-                if m[1] == 1: ass_cnt += 1
+        for s, passed_count in zip(semesters, passed_assessments):
+            ass_cnt += passed_count
             if ass_cnt >= 9:
                 visuals.mount(Label(f"Info: Ab dem Semester {s} ist das Assessment bestanden!", id=f"info_{s}"))
                 break
