@@ -665,6 +665,7 @@ class DisplayView(Screen):
         # Bar Chart Durchschnitt
         plot2 = PlotextPlot()
         plot2.plt.title("Notendurchschnitt pro Semester")
+        plot2.plt.xticks([0.5, 1, 2, 3, 4, 4.5, 5, 5.5, 6, 6.5])
         if average_values:
             plot2.plt.bar(semesters[:8], average_values[:8], orientation = "h", width = 0.001, color=32)
             plot2.plt.xlim(1, 6)
